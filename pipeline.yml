@@ -1,0 +1,79 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: ci-cd-pipeline
+spec:
+  workspaces:
+    - name: output
+  params:
+    - name: repo-url
+      type: string
+    - name: branch
+      type: string
+      default: "main"
+    - name: build-image
+      type: string
+    - name: app-name
+      type: string
+      default: "ny-app"
+  tasks:
+    - name: cleanup
+      taskRef:
+        name: cleanup
+      workspaces:
+        - name: source
+          workspace: output
+
+    - name: clone
+      taskRef:
+        name: git-clone
+      runAfter:
+        - cleanup
+      workspaces:
+        - name: output
+          workspace: output
+      params:
+        - name: url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.branch)
+
+    - name: lint
+      taskRef:
+        name: eslint
+      runAfter:
+        - clone
+      workspaces:
+        - name: source
+          workspace: output
+
+    - name: test
+      taskRef:
+        name: jest-test
+      runAfter:
+        - lint
+      workspaces:
+        - name: source
+          workspace: output
+
+    - name: build
+      taskRef:
+        name: buildah
+      runAfter:
+        - test
+      workspaces:
+        - name: source
+          workspace: output
+      params:
+        - name: IMAGE
+          value: $(params.build-image)
+
+    - name: deploy
+      taskRef:
+        name: openshift-client
+      runAfter:
+        - build
+      params:
+        - name: SCRIPT
+          value: |
+            oc create deployment $(params.app-name) --image=$(params.build-image) --dry-run=client -o yaml | oc apply -f -
